@@ -1,0 +1,14 @@
+# Prometheus Helm values template for kube-prometheus-stack
+# Customize resource limits, persistence, nodeSelector, etc.
+
+# Example snippets:
+# prometheus:
+#   prometheusSpec:
+#     retention: 10d
+
+# alertmanager:
+#   alertmanagerSpec:
+#     replicaCount: 2
+
+# grafana:
+#   adminPassword: ''

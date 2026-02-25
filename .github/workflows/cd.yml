@@ -1,0 +1,97 @@
+name: CD - AKS
+
+on:
+  workflow_dispatch:
+    inputs:
+      resource_group:
+        description: 'Azure resource group name'
+        required: true
+        default: 'devsecops-rg'
+      location:
+        description: 'Azure region'
+        required: true
+        default: 'eastus'
+      cluster_name:
+        description: 'AKS cluster name'
+        required: true
+        default: 'devsecops-aks'
+      node_count:
+        description: 'Number of nodes'
+        required: false
+        default: '2'
+      node_size:
+        description: 'VM size for node pool'
+        required: false
+        default: 'Standard_DS2_v2'
+      kubernetes_version:
+        description: 'Kubernetes version (optional)'
+        required: false
+        default: ''
+  repository_dispatch:
+    types: [deploy-aks]
+
+jobs:
+  create-aks:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout infra
+        uses: actions/checkout@v4
+
+      - name: Login to Azure
+        uses: azure/login@v1
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Create resource group
+        run: |
+          az group create --name "${{ github.event.inputs.resource_group || github.event.client_payload.resource_group }}" --location "${{ github.event.inputs.location || github.event.client_payload.location }}"
+
+      - name: Deploy AKS via ARM template
+        env:
+          RG: ${{ github.event.inputs.resource_group || github.event.client_payload.resource_group }}
+          LOCATION: ${{ github.event.inputs.location || github.event.client_payload.location }}
+          CLUSTER: ${{ github.event.inputs.cluster_name || github.event.client_payload.cluster_name }}
+          NODE_COUNT: ${{ github.event.inputs.node_count || github.event.client_payload.node_count }}
+          NODE_SIZE: ${{ github.event.inputs.node_size || github.event.client_payload.node_size }}
+          K8S_VER: ${{ github.event.inputs.kubernetes_version || github.event.client_payload.kubernetes_version }}
+        run: |
+          set -euo pipefail
+          PARAMS_FILE=infra/aks-params.json
+          # if jq is available, patch the params file with provided inputs
+          if command -v jq >/dev/null 2>&1; then
+            jq ".parameters.resourceGroupName.value = \"$RG\" | .parameters.clusterName.value = \"$CLUSTER\" | .parameters.location.value = \"$LOCATION\" | .parameters.nodeCount.value = ($NODE_COUNT | tonumber) | .parameters.nodeSize.value = \"$NODE_SIZE\"" $PARAMS_FILE > /tmp/aks-params.json && mv /tmp/aks-params.json $PARAMS_FILE
+          fi
+          az deployment group create --resource-group "$RG" --template-file infra/aks-template.json --parameters @$PARAMS_FILE
+
+      - name: Get kubeconfig
+        env:
+          RG: ${{ github.event.inputs.resource_group || github.event.client_payload.resource_group }}
+          CLUSTER: ${{ github.event.inputs.cluster_name || github.event.client_payload.cluster_name }}
+        run: |
+          az aks get-credentials --resource-group "$RG" --name "$CLUSTER" --admin --file kubeconfig
+          export KUBECONFIG=$PWD/kubeconfig
+          kubectl version --client
+
+      - name: Install Helm
+        uses: azure/setup-helm@v3
+
+      - name: Add Prometheus Helm repo
+        run: |
+          helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+          helm repo update
+
+      - name: Deploy kube-prometheus-stack (Prometheus + Grafana)
+        run: |
+          export KUBECONFIG=$PWD/kubeconfig
+          helm upgrade --install monitoring prometheus-community/kube-prometheus-stack \
+            -n monitoring --create-namespace \
+            -f infra/prometheus-values.yml || true
+
+      - name: Output dashboard hints
+        run: |
+          export KUBECONFIG=$PWD/kubeconfig
+          echo "Prometheus & Grafana deployed into namespace 'monitoring'."
+          echo "To access Grafana (if LoadBalancer):"
+          kubectl get svc -n monitoring -l app.kubernetes.io/name=grafana

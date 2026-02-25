@@ -1,0 +1,77 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "resourceGroupName": {
+      "type": "string"
+    },
+    "clusterName": {
+      "type": "string"
+    },
+    "location": {
+      "type": "string"
+    },
+    "kubernetesVersion": {
+      "type": "string",
+      "defaultValue": ""
+    },
+    "nodeCount": {
+      "type": "int",
+      "defaultValue": 2
+    },
+    "nodeSize": {
+      "type": "string",
+      "defaultValue": "Standard_DS2_v2"
+    },
+    "dnsPrefix": {
+      "type": "string",
+      "defaultValue": ""
+    },
+    "sshRSAPublicKey": {
+      "type": "string",
+      "defaultValue": ""
+    }
+  },
+  "resources": [
+    {
+      "type": "Microsoft.ContainerService/managedClusters",
+      "apiVersion": "2023-02-01",
+      "name": "[parameters('clusterName')]",
+      "location": "[parameters('location')]",
+      "properties": {
+        "dnsPrefix": "[parameters('dnsPrefix')]",
+        "kubernetesVersion": "[if(equals(parameters('kubernetesVersion'), ''), json('null'), parameters('kubernetesVersion'))]",
+        "agentPoolProfiles": [
+          {
+            "name": "nodepool",
+            "count": "[parameters('nodeCount')]",
+            "vmSize": "[parameters('nodeSize')]",
+            "osType": "Linux",
+            "type": "VirtualMachineScaleSets",
+            "mode": "System"
+          }
+        ],
+        "linuxProfile": {
+          "adminUsername": "azureuser",
+          "ssh": {
+            "publicKeys": [
+              {
+                "keyData": "[parameters('sshRSAPublicKey')]"
+              }
+            ]
+          }
+        },
+        "enableRBAC": true,
+        "networkProfile": {
+          "networkPlugin": "azure"
+        }
+      }
+    }
+  ],
+  "outputs": {
+    "clusterName": {
+      "type": "string",
+      "value": "[parameters('clusterName')]"
+    }
+  }
+}
