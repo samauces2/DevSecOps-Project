@@ -7,9 +7,9 @@ on:
   #   branches: [ main ]
   workflow_dispatch:
 
-permissions:
-  contents: read 
-  packages: write
+# permissions:
+#   contents: read 
+#   packages: write
 
 env:
   IMAGE: docker.io/${{ secrets.DOCKER_USERNAME }}/netflix:${{ github.sha }}
@@ -18,7 +18,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout code
+      - name: Checkout code 
         uses: actions/checkout@v4
 
       - name: SonarCloud analysis 
@@ -30,18 +30,19 @@ jobs:
           projectKey: DevSecOps-Project
           projectName: DevSecOps-Project
         env:
-          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL || 'https://sonarcloud.io' }}
+          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
 
       - id: sonar_qg
         name: Wait for SonarQube quality gate 
         if: ${{ secrets.SONAR_TOKEN }}
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL || 'https://sonarcloud.io' }}
+          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
           PROJECT_KEY: DevSecOps-Project
         run: |
           echo "Polling SonarQube for quality gate (will not abort pipeline automatically)."
           status="IN_PROGRESS"
+          SONAR_HOST_URL=${SONAR_HOST_URL:-https://sonarcloud.io}
           for i in {1..30}; do
             status=$(curl -s -u "$SONAR_TOKEN": "$SONAR_HOST_URL/api/qualitygates/project_status?projectKey=$PROJECT_KEY" | jq -r '.projectStatus.status')
             echo "Attempt $i - quality gate status: $status"
@@ -53,7 +54,7 @@ jobs:
 
       - name: Trivy - filesystem scan
         id: trivy_fs_action
-        if: ${{ (secrets.SONAR_TOKEN && steps.sonar_qg.outputs.qg_status == 'OK') || !secrets.SONAR_TOKEN }}
+        if: ${{ (secrets.SONAR_TOKEN != '' && steps.sonar_qg.outputs.qg_status == 'OK') || secrets.SONAR_TOKEN == '' }}
         uses: aquasecurity/trivy-action@v0.9.0
         with:
           scan-type: fs
@@ -73,14 +74,14 @@ jobs:
           fi
 
       - name: Build Docker image
-        if: ${{ (steps.sonar_qg.outputs.qg_status == 'OK' || !secrets.SONAR_TOKEN) && steps.parse_trivy_fs.outputs.fs_vulns_found == 'false' }}
+        if: ${{ (steps.sonar_qg.outputs.qg_status == 'OK' || secrets.SONAR_TOKEN == '') && steps.parse_trivy_fs.outputs.fs_vulns_found == 'false' }}
         run: |
           echo "Building Docker image"
           docker build --build-arg TMDB_V3_API_KEY=${{ secrets.TMDB_KEY }} -t $IMAGE .
 
       - name: Trivy - image scan
         id: trivy_image_action
-        if: ${{ steps.sonar_qg.outputs.qg_status == 'OK' || !secrets.SONAR_TOKEN }}
+        if: ${{ steps.sonar_qg.outputs.qg_status == 'OK' || secrets.SONAR_TOKEN == '' }}
         uses: aquasecurity/trivy-action@v0.9.0
         with:
           scan-type: image
@@ -122,7 +123,7 @@ jobs:
 
       - name: Tag & Push to Docker Hub
         id: push_image
-        if: ${{ secrets.DOCKER_USERNAME && secrets.DOCKER_PASSWORD && (steps.sonar_qg.outputs.qg_status == 'OK' || !secrets.SONAR_TOKEN) && steps.parse_trivy_fs.outputs.fs_vulns_found != 'true' && steps.parse_trivy_image.outputs.image_vulns_found != 'true' }}
+        if: ${{ secrets.DOCKER_USERNAME && secrets.DOCKER_PASSWORD && (steps.sonar_qg.outputs.qg_status == 'OK' || secrets.SONAR_TOKEN == '') && steps.parse_trivy_fs.outputs.fs_vulns_found != 'true' && steps.parse_trivy_image.outputs.image_vulns_found != 'true' }}
         run: |
           echo "Tagging and pushing to Docker Hub"
           docker push $IMAGE
